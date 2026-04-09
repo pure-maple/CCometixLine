@@ -71,9 +71,36 @@ impl Segment for ContextWindowSegment {
         metadata.insert("limit".to_string(), context_limit.to_string());
         metadata.insert("model".to_string(), input.model.id.clone());
 
+        // Build secondary parts: compact count + API latency
+        let mut secondary_parts = Vec::new();
+
+        let compact_count = count_compacts(&input.transcript_path);
+        if compact_count > 0 {
+            metadata.insert("compacts".to_string(), compact_count.to_string());
+            secondary_parts.push(format!("c×{}", compact_count));
+        }
+
+        if let Some(cost) = &input.cost {
+            if let Some(api_ms) = cost.total_api_duration_ms {
+                if api_ms > 0 {
+                    metadata.insert("api_duration_ms".to_string(), api_ms.to_string());
+                    let api_display = if api_ms >= 60_000 {
+                        format!("{:.1}m", api_ms as f64 / 60_000.0)
+                    } else if api_ms >= 1_000 {
+                        format!("{:.1}s", api_ms as f64 / 1_000.0)
+                    } else {
+                        format!("{}ms", api_ms)
+                    };
+                    secondary_parts.push(format!("api:{}", api_display));
+                }
+            }
+        }
+
+        let secondary = secondary_parts.join(" ");
+
         Some(SegmentData {
             primary: format!("{} · {} tokens", percentage_display, tokens_display),
-            secondary: String::new(),
+            secondary,
             metadata,
         })
     }
@@ -81,6 +108,31 @@ impl Segment for ContextWindowSegment {
     fn id(&self) -> SegmentId {
         SegmentId::ContextWindow
     }
+}
+
+/// Count the number of "summary" entries in the transcript (each = one compact).
+fn count_compacts<P: AsRef<Path>>(transcript_path: P) -> u32 {
+    let path = transcript_path.as_ref();
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return 0,
+    };
+    let reader = BufReader::new(file);
+    let mut count = 0u32;
+    for line in reader.lines() {
+        if let Ok(line) = line {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(entry) = serde_json::from_str::<TranscriptEntry>(trimmed) {
+                if entry.r#type.as_deref() == Some("summary") {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
 }
 
 fn parse_transcript_usage<P: AsRef<Path>>(transcript_path: P) -> Option<u32> {

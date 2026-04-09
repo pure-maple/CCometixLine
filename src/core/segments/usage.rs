@@ -81,14 +81,14 @@ impl UsageSegment {
         "".to_string()
     }
 
-    /// Calculate the expected (budget) utilization for 7-day period based on elapsed time.
+    /// Calculate the expected (budget) utilization for a period based on elapsed time.
     /// Returns a percentage (0-100) representing how much of the budget should ideally
-    /// be consumed by now if usage were evenly distributed across the 7-day window.
-    fn calc_seven_day_budget_pace(reset_time_str: Option<&str>) -> Option<u8> {
+    /// be consumed by now if usage were evenly distributed across the window.
+    fn calc_budget_pace(reset_time_str: Option<&str>, period: Duration) -> Option<u8> {
         let time_str = reset_time_str?;
         let resets_at = DateTime::parse_from_rfc3339(time_str).ok()?;
         let resets_at_utc = resets_at.with_timezone(&Utc);
-        let period_start = resets_at_utc - Duration::days(7);
+        let period_start = resets_at_utc - period;
         let now = Utc::now();
 
         if now < period_start || now > resets_at_utc {
@@ -96,9 +96,46 @@ impl UsageSegment {
         }
 
         let elapsed = now.signed_duration_since(period_start);
-        let total = Duration::days(7);
-        let pace = (elapsed.num_seconds() as f64 / total.num_seconds() as f64) * 100.0;
+        let pace = (elapsed.num_seconds() as f64 / period.num_seconds() as f64) * 100.0;
         Some(pace.round() as u8)
+    }
+
+    /// Estimate remaining time before hitting 100% at the current consumption rate.
+    /// Returns a human-readable duration string like "~1.5d" or "~3h".
+    fn calc_time_to_limit(utilization: f64, reset_time_str: Option<&str>, period: Duration) -> Option<String> {
+        if utilization <= 0.0 || utilization >= 100.0 {
+            return None;
+        }
+        let time_str = reset_time_str?;
+        let resets_at = DateTime::parse_from_rfc3339(time_str).ok()?;
+        let resets_at_utc = resets_at.with_timezone(&Utc);
+        let period_start = resets_at_utc - period;
+        let now = Utc::now();
+
+        if now <= period_start || now >= resets_at_utc {
+            return None;
+        }
+
+        let elapsed_secs = now.signed_duration_since(period_start).num_seconds() as f64;
+        // Current burn rate: utilization% consumed in elapsed_secs
+        // Time to reach 100%: (100 / utilization) * elapsed_secs
+        let total_secs_to_100 = (100.0 / utilization) * elapsed_secs;
+        let remaining_secs = total_secs_to_100 - elapsed_secs;
+
+        if remaining_secs <= 0.0 {
+            return Some("~0".to_string());
+        }
+
+        let remaining_hours = remaining_secs / 3600.0;
+        if remaining_hours >= 24.0 {
+            let days = remaining_hours / 24.0;
+            Some(format!("~{:.1}d", days))
+        } else if remaining_hours >= 1.0 {
+            Some(format!("~{:.0}h", remaining_hours))
+        } else {
+            let mins = remaining_secs / 60.0;
+            Some(format!("~{:.0}m", mins))
+        }
     }
 
     fn get_cache_path() -> Option<std::path::PathBuf> {
@@ -293,12 +330,27 @@ impl Segment for UsageSegment {
         let seven_day_percent = seven_day_util.round() as u8;
         let five_hour_reset = Self::format_reset_hour(five_hour_resets_at.as_deref());
         let seven_day_reset = Self::format_reset_date_hour(seven_day_resets_at.as_deref());
-        let budget_pace = Self::calc_seven_day_budget_pace(seven_day_resets_at.as_deref());
-        let primary = format!("5h {}% {}", five_hour_percent, five_hour_reset);
-        let secondary = match budget_pace {
-            Some(pace) => format!("· 7d {}%({}%) {}", seven_day_percent, pace, seven_day_reset),
-            None => format!("· 7d {}% {}", seven_day_percent, seven_day_reset),
+
+        let five_hour_pace = Self::calc_budget_pace(five_hour_resets_at.as_deref(), Duration::hours(5));
+        let seven_day_pace = Self::calc_budget_pace(seven_day_resets_at.as_deref(), Duration::days(7));
+        let time_to_limit = Self::calc_time_to_limit(seven_day_util, seven_day_resets_at.as_deref(), Duration::days(7));
+
+        // 5h display: "5h 21%(40%) @23"
+        let primary = match five_hour_pace {
+            Some(pace) => format!("5h {}%({}%) {}", five_hour_percent, pace, five_hour_reset),
+            None => format!("5h {}% {}", five_hour_percent, five_hour_reset),
         };
+
+        // 7d display: "· 7d 56%(55%) ~2.1d @4-12 23"
+        let mut seven_day_str = match seven_day_pace {
+            Some(pace) => format!("7d {}%({}%)", seven_day_percent, pace),
+            None => format!("7d {}%", seven_day_percent),
+        };
+        if let Some(ref ttl) = time_to_limit {
+            seven_day_str.push_str(&format!(" {}", ttl));
+        }
+        seven_day_str.push_str(&format!(" {}", seven_day_reset));
+        let secondary = format!("· {}", seven_day_str.trim());
 
         let mut metadata = HashMap::new();
         metadata.insert("dynamic_icon".to_string(), dynamic_icon);
@@ -310,8 +362,14 @@ impl Segment for UsageSegment {
             "seven_day_utilization".to_string(),
             seven_day_util.to_string(),
         );
-        if let Some(pace) = budget_pace {
+        if let Some(pace) = five_hour_pace {
+            metadata.insert("five_hour_budget_pace".to_string(), pace.to_string());
+        }
+        if let Some(pace) = seven_day_pace {
             metadata.insert("seven_day_budget_pace".to_string(), pace.to_string());
+        }
+        if let Some(ref ttl) = time_to_limit {
+            metadata.insert("time_to_limit".to_string(), ttl.clone());
         }
 
         Some(SegmentData {
