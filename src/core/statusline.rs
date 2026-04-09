@@ -1,4 +1,4 @@
-use crate::config::{AnsiColor, Config, SegmentConfig, StyleMode};
+use crate::config::{AnsiColor, Config, SegmentConfig, SegmentId, StyleMode};
 use crate::core::segments::SegmentData;
 
 /// Strip ANSI escape sequences and return visible text length
@@ -38,31 +38,98 @@ impl StatusLineGenerator {
         Self { config }
     }
 
+    /// Segment display priority (lower = higher priority, kept longer).
+    fn segment_priority(id: &SegmentId) -> u8 {
+        match id {
+            SegmentId::Model => 0,
+            SegmentId::Usage => 1,
+            SegmentId::ContextWindow => 2,
+            SegmentId::Directory => 3,
+            SegmentId::Git => 4,
+            SegmentId::Cost => 5,
+            SegmentId::Session => 6,
+            SegmentId::OutputStyle => 7,
+            SegmentId::Update => 8,
+        }
+    }
+
+    /// Get terminal width, falling back to a generous default.
+    fn terminal_width() -> usize {
+        crossterm::terminal::size().map(|(w, _)| w as usize).unwrap_or(120)
+    }
+
+    /// Join rendered segments using the configured separator style.
+    fn join_segments(
+        &self,
+        rendered: &[String],
+        segment_pairs: &[(SegmentConfig, SegmentData)],
+    ) -> String {
+        if rendered.is_empty() {
+            return String::new();
+        }
+        if self.config.style.separator == "\u{e0b0}" {
+            self.join_with_powerline_arrows(rendered, segment_pairs)
+        } else {
+            self.join_with_white_separators(rendered)
+        }
+    }
+
     pub fn generate(&self, segments: Vec<(SegmentConfig, SegmentData)>) -> String {
-        let mut output = Vec::new();
         let enabled_segments: Vec<_> = segments
             .into_iter()
             .filter(|(config, _)| config.enabled)
             .collect();
 
-        for (config, data) in enabled_segments.iter() {
-            let rendered = self.render_segment(config, data);
-            if !rendered.is_empty() {
-                output.push(rendered);
-            }
-        }
-
-        if output.is_empty() {
+        if enabled_segments.is_empty() {
             return String::new();
         }
 
-        // Handle Powerline arrow separators with color transition
-        if self.config.style.separator == "\u{e0b0}" {
-            self.join_with_powerline_arrows(&output, &enabled_segments)
-        } else {
-            // For all other separators, use white color and simple join
-            self.join_with_white_separators(&output)
+        let term_width = Self::terminal_width();
+
+        // Phase 1: render everything (full)
+        let full_output = self.render_and_join(&enabled_segments);
+        if visible_width(&full_output) <= term_width {
+            return full_output;
         }
+
+        // Phase 2: drop secondary text from all segments
+        let compact_segments: Vec<_> = enabled_segments
+            .iter()
+            .map(|(config, data)| {
+                let mut compact_data = data.clone();
+                compact_data.secondary = String::new();
+                (config.clone(), compact_data)
+            })
+            .collect();
+        let compact_output = self.render_and_join(&compact_segments);
+        if visible_width(&compact_output) <= term_width {
+            return compact_output;
+        }
+
+        // Phase 3: progressively drop lowest-priority segments
+        let mut remaining = compact_segments;
+        remaining.sort_by_key(|(config, _)| Self::segment_priority(&config.id));
+
+        while remaining.len() > 1 {
+            remaining.pop(); // remove lowest priority (highest number)
+            let output = self.render_and_join(&remaining);
+            if visible_width(&output) <= term_width {
+                return output;
+            }
+        }
+
+        // Last resort: just show the highest priority segment
+        self.render_and_join(&remaining)
+    }
+
+    /// Render all segments and join them.
+    fn render_and_join(&self, segments: &[(SegmentConfig, SegmentData)]) -> String {
+        let rendered: Vec<String> = segments
+            .iter()
+            .map(|(config, data)| self.render_segment(config, data))
+            .filter(|s| !s.is_empty())
+            .collect();
+        self.join_segments(&rendered, segments)
     }
 
     /// Generate statusline for TUI preview with proper width calculation
