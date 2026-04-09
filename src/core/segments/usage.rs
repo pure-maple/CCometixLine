@@ -21,6 +21,8 @@ struct UsagePeriod {
 struct ApiUsageCache {
     five_hour_utilization: f64,
     seven_day_utilization: f64,
+    #[serde(default)]
+    five_hour_resets_at: Option<String>,
     resets_at: Option<String>,
     cached_at: String,
 }
@@ -47,22 +49,56 @@ impl UsageSegment {
         }
     }
 
-    fn format_reset_time(reset_time_str: Option<&str>) -> String {
+    fn round_to_hour(time_str: &str) -> Option<DateTime<Local>> {
+        let dt = DateTime::parse_from_rfc3339(time_str).ok()?;
+        let mut local_dt = dt.with_timezone(&Local);
+        if local_dt.minute() > 45 {
+            local_dt += Duration::hours(1);
+        }
+        Some(local_dt)
+    }
+
+    fn format_reset_hour(reset_time_str: Option<&str>) -> String {
         if let Some(time_str) = reset_time_str {
-            if let Ok(dt) = DateTime::parse_from_rfc3339(time_str) {
-                let mut local_dt = dt.with_timezone(&Local);
-                if local_dt.minute() > 45 {
-                    local_dt += Duration::hours(1);
-                }
+            if let Some(local_dt) = Self::round_to_hour(time_str) {
+                return format!("@{}", local_dt.hour());
+            }
+        }
+        "".to_string()
+    }
+
+    fn format_reset_date_hour(reset_time_str: Option<&str>) -> String {
+        if let Some(time_str) = reset_time_str {
+            if let Some(local_dt) = Self::round_to_hour(time_str) {
                 return format!(
-                    "{}-{}-{}",
+                    "@{}-{} {}",
                     local_dt.month(),
                     local_dt.day(),
                     local_dt.hour()
                 );
             }
         }
-        "?".to_string()
+        "".to_string()
+    }
+
+    /// Calculate the expected (budget) utilization for 7-day period based on elapsed time.
+    /// Returns a percentage (0-100) representing how much of the budget should ideally
+    /// be consumed by now if usage were evenly distributed across the 7-day window.
+    fn calc_seven_day_budget_pace(reset_time_str: Option<&str>) -> Option<u8> {
+        let time_str = reset_time_str?;
+        let resets_at = DateTime::parse_from_rfc3339(time_str).ok()?;
+        let resets_at_utc = resets_at.with_timezone(&Utc);
+        let period_start = resets_at_utc - Duration::days(7);
+        let now = Utc::now();
+
+        if now < period_start || now > resets_at_utc {
+            return None;
+        }
+
+        let elapsed = now.signed_duration_since(period_start);
+        let total = Duration::days(7);
+        let pace = (elapsed.num_seconds() as f64 / total.num_seconds() as f64) * 100.0;
+        Some(pace.round() as u8)
     }
 
     fn get_cache_path() -> Option<std::path::PathBuf> {
@@ -209,47 +245,60 @@ impl Segment for UsageSegment {
             .map(|cache| self.is_cache_valid(cache, cache_duration))
             .unwrap_or(false);
 
-        let (five_hour_util, seven_day_util, resets_at) = if use_cached {
-            let cache = cached_data.unwrap();
-            (
-                cache.five_hour_utilization,
-                cache.seven_day_utilization,
-                cache.resets_at,
-            )
-        } else {
-            match self.fetch_api_usage(api_base_url, &token, timeout) {
-                Some(response) => {
-                    let cache = ApiUsageCache {
-                        five_hour_utilization: response.five_hour.utilization,
-                        seven_day_utilization: response.seven_day.utilization,
-                        resets_at: response.seven_day.resets_at.clone(),
-                        cached_at: Utc::now().to_rfc3339(),
-                    };
-                    self.save_cache(&cache);
-                    (
-                        response.five_hour.utilization,
-                        response.seven_day.utilization,
-                        response.seven_day.resets_at,
-                    )
-                }
-                None => {
-                    if let Some(cache) = cached_data {
+        let (five_hour_util, seven_day_util, five_hour_resets_at, seven_day_resets_at) =
+            if use_cached {
+                let cache = cached_data.unwrap();
+                (
+                    cache.five_hour_utilization,
+                    cache.seven_day_utilization,
+                    cache.five_hour_resets_at,
+                    cache.resets_at,
+                )
+            } else {
+                match self.fetch_api_usage(api_base_url, &token, timeout) {
+                    Some(response) => {
+                        let cache = ApiUsageCache {
+                            five_hour_utilization: response.five_hour.utilization,
+                            seven_day_utilization: response.seven_day.utilization,
+                            five_hour_resets_at: response.five_hour.resets_at.clone(),
+                            resets_at: response.seven_day.resets_at.clone(),
+                            cached_at: Utc::now().to_rfc3339(),
+                        };
+                        self.save_cache(&cache);
                         (
-                            cache.five_hour_utilization,
-                            cache.seven_day_utilization,
-                            cache.resets_at,
+                            response.five_hour.utilization,
+                            response.seven_day.utilization,
+                            response.five_hour.resets_at,
+                            response.seven_day.resets_at,
                         )
-                    } else {
-                        return None;
+                    }
+                    None => {
+                        if let Some(cache) = cached_data {
+                            (
+                                cache.five_hour_utilization,
+                                cache.seven_day_utilization,
+                                cache.five_hour_resets_at,
+                                cache.resets_at,
+                            )
+                        } else {
+                            return None;
+                        }
                     }
                 }
-            }
-        };
+            };
 
-        let dynamic_icon = Self::get_circle_icon(seven_day_util / 100.0);
+        let max_util = five_hour_util.max(seven_day_util);
+        let dynamic_icon = Self::get_circle_icon(max_util / 100.0);
         let five_hour_percent = five_hour_util.round() as u8;
-        let primary = format!("{}%", five_hour_percent);
-        let secondary = format!("· {}", Self::format_reset_time(resets_at.as_deref()));
+        let seven_day_percent = seven_day_util.round() as u8;
+        let five_hour_reset = Self::format_reset_hour(five_hour_resets_at.as_deref());
+        let seven_day_reset = Self::format_reset_date_hour(seven_day_resets_at.as_deref());
+        let budget_pace = Self::calc_seven_day_budget_pace(seven_day_resets_at.as_deref());
+        let primary = format!("5h {}% {}", five_hour_percent, five_hour_reset);
+        let secondary = match budget_pace {
+            Some(pace) => format!("· 7d {}%({}%) {}", seven_day_percent, pace, seven_day_reset),
+            None => format!("· 7d {}% {}", seven_day_percent, seven_day_reset),
+        };
 
         let mut metadata = HashMap::new();
         metadata.insert("dynamic_icon".to_string(), dynamic_icon);
@@ -261,6 +310,9 @@ impl Segment for UsageSegment {
             "seven_day_utilization".to_string(),
             seven_day_util.to_string(),
         );
+        if let Some(pace) = budget_pace {
+            metadata.insert("seven_day_budget_pace".to_string(), pace.to_string());
+        }
 
         Some(SegmentData {
             primary,
