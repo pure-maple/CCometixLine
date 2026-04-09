@@ -335,22 +335,41 @@ impl Segment for UsageSegment {
         let seven_day_pace = Self::calc_budget_pace(seven_day_resets_at.as_deref(), Duration::days(7));
         let time_to_limit = Self::calc_time_to_limit(seven_day_util, seven_day_resets_at.as_deref(), Duration::days(7));
 
-        // 5h display: "5h 21%(40%) @23"
-        let primary = match five_hour_pace {
-            Some(pace) => format!("5h {}%({}%) {}", five_hour_percent, pace, five_hour_reset),
-            None => format!("5h {}% {}", five_hour_percent, five_hour_reset),
+        // Primary: "5h 26%(25%) · 7d 57%(55%) ~2.9d"
+        // Secondary (low-priority details): reset times "5h@23 7d@4-12 23"
+        let mut primary_parts = Vec::new();
+
+        // 5h part
+        match five_hour_pace {
+            Some(pace) => primary_parts.push(format!("5h {}%({}%)", five_hour_percent, pace)),
+            None => primary_parts.push(format!("5h {}%", five_hour_percent)),
         };
 
-        // 7d display: "· 7d 56%(55%) ~2.1d @4-12 23"
-        let mut seven_day_str = match seven_day_pace {
+        // 7d part
+        let mut seven_day_part = match seven_day_pace {
             Some(pace) => format!("7d {}%({}%)", seven_day_percent, pace),
             None => format!("7d {}%", seven_day_percent),
         };
         if let Some(ref ttl) = time_to_limit {
-            seven_day_str.push_str(&format!(" {}", ttl));
+            seven_day_part.push_str(&format!(" {}", ttl));
         }
-        seven_day_str.push_str(&format!(" {}", seven_day_reset));
-        let secondary = format!("· {}", seven_day_str.trim());
+        primary_parts.push(seven_day_part);
+
+        let primary = primary_parts.join(" · ");
+
+        // Secondary: reset times (shown when there's room)
+        let mut reset_parts = Vec::new();
+        if !five_hour_reset.is_empty() {
+            reset_parts.push(format!("5h{}", five_hour_reset));
+        }
+        if !seven_day_reset.is_empty() {
+            reset_parts.push(format!("7d{}", seven_day_reset));
+        }
+        let secondary = if reset_parts.is_empty() {
+            String::new()
+        } else {
+            format!("rst:{}", reset_parts.join(" "))
+        };
 
         let mut metadata = HashMap::new();
         metadata.insert("dynamic_icon".to_string(), dynamic_icon);

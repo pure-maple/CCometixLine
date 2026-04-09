@@ -47,20 +47,6 @@ impl Segment for SessionSegment {
             return None;
         };
 
-        // Secondary display: line changes if available (green for +, red for -)
-        let secondary = match (cost_data.total_lines_added, cost_data.total_lines_removed) {
-            (Some(added), Some(removed)) if added > 0 || removed > 0 => {
-                format!("\x1b[32m+{}\x1b[0m \x1b[31m-{}\x1b[0m", added, removed)
-            }
-            (Some(added), None) if added > 0 => {
-                format!("\x1b[32m+{}\x1b[0m", added)
-            }
-            (None, Some(removed)) if removed > 0 => {
-                format!("\x1b[31m-{}\x1b[0m", removed)
-            }
-            _ => String::new(),
-        };
-
         let mut metadata = HashMap::new();
         if let Some(duration) = cost_data.total_duration_ms {
             metadata.insert("duration_ms".to_string(), duration.to_string());
@@ -74,6 +60,32 @@ impl Segment for SessionSegment {
         if let Some(removed) = cost_data.total_lines_removed {
             metadata.insert("lines_removed".to_string(), removed.to_string());
         }
+
+        // Secondary: line changes + API wait ratio
+        let mut secondary_parts = Vec::new();
+
+        match (cost_data.total_lines_added, cost_data.total_lines_removed) {
+            (Some(added), Some(removed)) if added > 0 || removed > 0 => {
+                secondary_parts.push(format!("\x1b[32m+{}\x1b[0m \x1b[31m-{}\x1b[0m", added, removed));
+            }
+            (Some(added), None) if added > 0 => {
+                secondary_parts.push(format!("\x1b[32m+{}\x1b[0m", added));
+            }
+            (None, Some(removed)) if removed > 0 => {
+                secondary_parts.push(format!("\x1b[31m-{}\x1b[0m", removed));
+            }
+            _ => {}
+        }
+
+        if let (Some(total_ms), Some(api_ms)) = (cost_data.total_duration_ms, cost_data.total_api_duration_ms) {
+            if total_ms > 0 && api_ms > 0 {
+                let ratio = (api_ms as f64 / total_ms as f64 * 100.0).round() as u8;
+                secondary_parts.push(format!("api:{}%", ratio));
+                metadata.insert("api_ratio".to_string(), ratio.to_string());
+            }
+        }
+
+        let secondary = secondary_parts.join(" ");
 
         Some(SegmentData {
             primary,
