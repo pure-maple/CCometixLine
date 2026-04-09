@@ -42,14 +42,16 @@ impl StatusLineGenerator {
     fn segment_priority(id: &SegmentId) -> u8 {
         match id {
             SegmentId::Model => 0,
-            SegmentId::Usage => 1,
-            SegmentId::ContextWindow => 2,
-            SegmentId::Directory => 3,
-            SegmentId::Git => 4,
-            SegmentId::Cost => 5,
-            SegmentId::Session => 6,
-            SegmentId::OutputStyle => 7,
-            SegmentId::Update => 8,
+            SegmentId::HourlyUsage => 1,
+            SegmentId::WeeklyUsage => 2,
+            SegmentId::Usage => 2,
+            SegmentId::ContextWindow => 3,
+            SegmentId::Directory => 4,
+            SegmentId::Git => 5,
+            SegmentId::Cost => 6,
+            SegmentId::Session => 7,
+            SegmentId::OutputStyle => 8,
+            SegmentId::Update => 9,
         }
     }
 
@@ -558,6 +560,14 @@ pub fn collect_all_segments(
             }
             crate::config::SegmentId::Usage => {
                 let segment = UsageSegment::new();
+                segment.collect(input)
+            }
+            crate::config::SegmentId::HourlyUsage => {
+                let segment = HourlyUsageSegment::new();
+                segment.collect(input)
+            }
+            crate::config::SegmentId::WeeklyUsage => {
+                let segment = WeeklyUsageSegment::new();
                 segment.collect(input)
             }
             crate::config::SegmentId::Cost => {

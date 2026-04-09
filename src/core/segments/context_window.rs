@@ -74,7 +74,7 @@ impl Segment for ContextWindowSegment {
         let compact_count = count_compacts(&input.transcript_path);
         let secondary = if compact_count > 0 {
             metadata.insert("compacts".to_string(), compact_count.to_string());
-            format!("c×{}", compact_count)
+            format!("󰁥{}", compact_count)
         } else {
             String::new()
         };

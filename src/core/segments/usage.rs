@@ -35,7 +35,7 @@ impl UsageSegment {
         Self
     }
 
-    fn get_circle_icon(utilization: f64) -> String {
+    pub(super) fn get_circle_icon(utilization: f64) -> String {
         let percent = (utilization * 100.0) as u8;
         match percent {
             0..=12 => "\u{f0a9e}".to_string(),  // circle_slice_1
@@ -58,7 +58,7 @@ impl UsageSegment {
         Some(local_dt)
     }
 
-    fn format_reset_hour(reset_time_str: Option<&str>) -> String {
+    pub(super) fn format_reset_hour(reset_time_str: Option<&str>) -> String {
         if let Some(time_str) = reset_time_str {
             if let Some(local_dt) = Self::round_to_hour(time_str) {
                 return format!("@{}", local_dt.hour());
@@ -67,7 +67,7 @@ impl UsageSegment {
         "".to_string()
     }
 
-    fn format_reset_date_hour(reset_time_str: Option<&str>) -> String {
+    pub(super) fn format_reset_date_hour(reset_time_str: Option<&str>) -> String {
         if let Some(time_str) = reset_time_str {
             if let Some(local_dt) = Self::round_to_hour(time_str) {
                 return format!(
@@ -84,7 +84,7 @@ impl UsageSegment {
     /// Calculate the expected (budget) utilization for a period based on elapsed time.
     /// Returns a percentage (0-100) representing how much of the budget should ideally
     /// be consumed by now if usage were evenly distributed across the window.
-    fn calc_budget_pace(reset_time_str: Option<&str>, period: Duration) -> Option<u8> {
+    pub(super) fn calc_budget_pace(reset_time_str: Option<&str>, period: Duration) -> Option<u8> {
         let time_str = reset_time_str?;
         let resets_at = DateTime::parse_from_rfc3339(time_str).ok()?;
         let resets_at_utc = resets_at.with_timezone(&Utc);
@@ -102,7 +102,7 @@ impl UsageSegment {
 
     /// Estimate remaining time before hitting 100% at the current consumption rate.
     /// Returns a human-readable duration string like "~1.5d" or "~3h".
-    fn calc_time_to_limit(utilization: f64, reset_time_str: Option<&str>, period: Duration) -> Option<String> {
+    pub(super) fn calc_time_to_limit(utilization: f64, reset_time_str: Option<&str>, period: Duration) -> Option<String> {
         if utilization <= 0.0 || utilization >= 100.0 {
             return None;
         }
@@ -328,72 +328,34 @@ impl Segment for UsageSegment {
         let dynamic_icon = Self::get_circle_icon(max_util / 100.0);
         let five_hour_percent = five_hour_util.round() as u8;
         let seven_day_percent = seven_day_util.round() as u8;
-        let five_hour_reset = Self::format_reset_hour(five_hour_resets_at.as_deref());
-        let seven_day_reset = Self::format_reset_date_hour(seven_day_resets_at.as_deref());
 
         let five_hour_pace = Self::calc_budget_pace(five_hour_resets_at.as_deref(), Duration::hours(5));
         let seven_day_pace = Self::calc_budget_pace(seven_day_resets_at.as_deref(), Duration::days(7));
         let time_to_limit = Self::calc_time_to_limit(seven_day_util, seven_day_resets_at.as_deref(), Duration::days(7));
 
-        // Primary: "5h 26%(25%) · 7d 57%(55%) ~2.9d"
-        // Secondary (low-priority details): reset times "5h@23 7d@4-12 23"
-        let mut primary_parts = Vec::new();
-
-        // 5h part
-        match five_hour_pace {
-            Some(pace) => primary_parts.push(format!("5h {}%({}%)", five_hour_percent, pace)),
-            None => primary_parts.push(format!("5h {}%", five_hour_percent)),
+        // Combined format for legacy Usage segment
+        let five_h = match five_hour_pace {
+            Some(pace) => format!("5h {}%({}%)", five_hour_percent, pace),
+            None => format!("5h {}%", five_hour_percent),
         };
-
-        // 7d part
-        let mut seven_day_part = match seven_day_pace {
+        let mut seven_d = match seven_day_pace {
             Some(pace) => format!("7d {}%({}%)", seven_day_percent, pace),
             None => format!("7d {}%", seven_day_percent),
         };
         if let Some(ref ttl) = time_to_limit {
-            seven_day_part.push_str(&format!(" {}", ttl));
+            seven_d.push_str(&format!(" {}", ttl));
         }
-        primary_parts.push(seven_day_part);
 
-        let primary = primary_parts.join(" · ");
-
-        // Secondary: reset times (shown when there's room)
-        let mut reset_parts = Vec::new();
-        if !five_hour_reset.is_empty() {
-            reset_parts.push(format!("5h{}", five_hour_reset));
-        }
-        if !seven_day_reset.is_empty() {
-            reset_parts.push(format!("7d{}", seven_day_reset));
-        }
-        let secondary = if reset_parts.is_empty() {
-            String::new()
-        } else {
-            format!("rst:{}", reset_parts.join(" "))
-        };
+        let primary = format!("{} · {}", five_h, seven_d);
 
         let mut metadata = HashMap::new();
         metadata.insert("dynamic_icon".to_string(), dynamic_icon);
-        metadata.insert(
-            "five_hour_utilization".to_string(),
-            five_hour_util.to_string(),
-        );
-        metadata.insert(
-            "seven_day_utilization".to_string(),
-            seven_day_util.to_string(),
-        );
-        if let Some(pace) = five_hour_pace {
-            metadata.insert("five_hour_budget_pace".to_string(), pace.to_string());
-        }
-        if let Some(pace) = seven_day_pace {
-            metadata.insert("seven_day_budget_pace".to_string(), pace.to_string());
-        }
-        if let Some(ref ttl) = time_to_limit {
-            metadata.insert("time_to_limit".to_string(), ttl.clone());
-        }
+        metadata.insert("five_hour_utilization".to_string(), five_hour_util.to_string());
+        metadata.insert("seven_day_utilization".to_string(), seven_day_util.to_string());
 
         Some(SegmentData {
             primary,
-            secondary,
+            secondary: String::new(),
             metadata,
         })
     }
@@ -401,4 +363,146 @@ impl Segment for UsageSegment {
     fn id(&self) -> SegmentId {
         SegmentId::Usage
     }
+}
+
+// ── Shared cache reader for split segments ──
+
+struct UsageData {
+    five_hour_util: f64,
+    seven_day_util: f64,
+    five_hour_resets_at: Option<String>,
+    seven_day_resets_at: Option<String>,
+}
+
+fn load_usage_data() -> Option<UsageData> {
+    let segment = UsageSegment::new();
+    let token = credentials::get_oauth_token()?;
+
+    let config = crate::config::Config::load().ok()?;
+    // Read options from hourly_usage, weekly_usage, or legacy usage
+    let segment_config = config.segments.iter().find(|s| {
+        s.id == SegmentId::HourlyUsage || s.id == SegmentId::WeeklyUsage || s.id == SegmentId::Usage
+    });
+
+    let api_base_url = segment_config
+        .and_then(|sc| sc.options.get("api_base_url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://api.anthropic.com");
+    let cache_duration = segment_config
+        .and_then(|sc| sc.options.get("cache_duration"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300);
+    let timeout = segment_config
+        .and_then(|sc| sc.options.get("timeout"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2);
+
+    let cached_data = segment.load_cache();
+    let use_cached = cached_data.as_ref().map(|c| segment.is_cache_valid(c, cache_duration)).unwrap_or(false);
+
+    let (fh, sd, fhr, sdr) = if use_cached {
+        let c = cached_data.unwrap();
+        (c.five_hour_utilization, c.seven_day_utilization, c.five_hour_resets_at, c.resets_at)
+    } else {
+        match segment.fetch_api_usage(api_base_url, &token, timeout) {
+            Some(resp) => {
+                let cache = ApiUsageCache {
+                    five_hour_utilization: resp.five_hour.utilization,
+                    seven_day_utilization: resp.seven_day.utilization,
+                    five_hour_resets_at: resp.five_hour.resets_at.clone(),
+                    resets_at: resp.seven_day.resets_at.clone(),
+                    cached_at: Utc::now().to_rfc3339(),
+                };
+                segment.save_cache(&cache);
+                (resp.five_hour.utilization, resp.seven_day.utilization, resp.five_hour.resets_at, resp.seven_day.resets_at)
+            }
+            None => {
+                let c = cached_data?;
+                (c.five_hour_utilization, c.seven_day_utilization, c.five_hour_resets_at, c.resets_at)
+            }
+        }
+    };
+
+    Some(UsageData { five_hour_util: fh, seven_day_util: sd, five_hour_resets_at: fhr, seven_day_resets_at: sdr })
+}
+
+// ── HourlyUsageSegment (5h) ──
+
+#[derive(Default)]
+pub struct HourlyUsageSegment;
+
+impl HourlyUsageSegment {
+    pub fn new() -> Self { Self }
+}
+
+impl Segment for HourlyUsageSegment {
+    fn collect(&self, _input: &InputData) -> Option<SegmentData> {
+        let data = load_usage_data()?;
+        let percent = data.five_hour_util.round() as u8;
+        let pace = UsageSegment::calc_budget_pace(data.five_hour_resets_at.as_deref(), Duration::hours(5));
+        let reset = UsageSegment::format_reset_hour(data.five_hour_resets_at.as_deref());
+
+        let primary = match pace {
+            Some(p) => format!("{}%({}%)", percent, p),
+            None => format!("{}%", percent),
+        };
+        // Secondary: reset time with clock icon
+        let secondary = if !reset.is_empty() {
+            format!("󰅐 {}", reset)
+        } else {
+            String::new()
+        };
+
+        let dynamic_icon = UsageSegment::get_circle_icon(data.five_hour_util / 100.0);
+        let mut metadata = HashMap::new();
+        metadata.insert("dynamic_icon".to_string(), dynamic_icon);
+        metadata.insert("utilization".to_string(), data.five_hour_util.to_string());
+
+        Some(SegmentData { primary, secondary, metadata })
+    }
+
+    fn id(&self) -> SegmentId { SegmentId::HourlyUsage }
+}
+
+// ── WeeklyUsageSegment (7d) ──
+
+#[derive(Default)]
+pub struct WeeklyUsageSegment;
+
+impl WeeklyUsageSegment {
+    pub fn new() -> Self { Self }
+}
+
+impl Segment for WeeklyUsageSegment {
+    fn collect(&self, _input: &InputData) -> Option<SegmentData> {
+        let data = load_usage_data()?;
+        let percent = data.seven_day_util.round() as u8;
+        let pace = UsageSegment::calc_budget_pace(data.seven_day_resets_at.as_deref(), Duration::days(7));
+        let ttl = UsageSegment::calc_time_to_limit(data.seven_day_util, data.seven_day_resets_at.as_deref(), Duration::days(7));
+        let reset = UsageSegment::format_reset_date_hour(data.seven_day_resets_at.as_deref());
+
+        let mut primary = match pace {
+            Some(p) => format!("{}%({}%)", percent, p),
+            None => format!("{}%", percent),
+        };
+        if let Some(ref t) = ttl {
+            primary.push_str(&format!(" {}", t));
+        }
+
+        // Secondary: reset time with clock icon
+        let secondary = if !reset.is_empty() {
+            format!("󰅐 {}", reset)
+        } else {
+            String::new()
+        };
+
+        let dynamic_icon = UsageSegment::get_circle_icon(data.seven_day_util / 100.0);
+        let mut metadata = HashMap::new();
+        metadata.insert("dynamic_icon".to_string(), dynamic_icon);
+        metadata.insert("utilization".to_string(), data.seven_day_util.to_string());
+
+        Some(SegmentData { primary, secondary, metadata })
+    }
+
+    fn id(&self) -> SegmentId { SegmentId::WeeklyUsage }
 }

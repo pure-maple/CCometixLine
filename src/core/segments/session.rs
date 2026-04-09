@@ -80,7 +80,7 @@ impl Segment for SessionSegment {
         if let (Some(total_ms), Some(api_ms)) = (cost_data.total_duration_ms, cost_data.total_api_duration_ms) {
             if total_ms > 0 && api_ms > 0 {
                 let ratio = (api_ms as f64 / total_ms as f64 * 100.0).round() as u8;
-                secondary_parts.push(format!("api:{}%", ratio));
+                secondary_parts.push(format!("󰈀{}%", ratio));
                 metadata.insert("api_ratio".to_string(), ratio.to_string());
             }
         }
