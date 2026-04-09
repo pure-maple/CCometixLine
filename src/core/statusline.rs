@@ -46,12 +46,13 @@ impl StatusLineGenerator {
             SegmentId::WeeklyUsage => 2,
             SegmentId::Usage => 2,
             SegmentId::ContextWindow => 3,
-            SegmentId::Directory => 4,
-            SegmentId::Git => 5,
-            SegmentId::Cost => 6,
-            SegmentId::Session => 7,
-            SegmentId::OutputStyle => 8,
-            SegmentId::Update => 9,
+            SegmentId::CodexUsage => 4,
+            SegmentId::Directory => 5,
+            SegmentId::Git => 6,
+            SegmentId::Cost => 7,
+            SegmentId::Session => 8,
+            SegmentId::OutputStyle => 9,
+            SegmentId::Update => 10,
         }
     }
 
@@ -568,6 +569,10 @@ pub fn collect_all_segments(
             }
             crate::config::SegmentId::WeeklyUsage => {
                 let segment = WeeklyUsageSegment::new();
+                segment.collect(input)
+            }
+            crate::config::SegmentId::CodexUsage => {
+                let segment = CodexUsageSegment::new();
                 segment.collect(input)
             }
             crate::config::SegmentId::Cost => {

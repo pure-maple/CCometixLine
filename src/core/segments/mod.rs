@@ -1,3 +1,4 @@
+pub mod codex_usage;
 pub mod context_window;
 pub mod cost;
 pub mod directory;
@@ -25,6 +26,7 @@ pub struct SegmentData {
 }
 
 // Re-export all segment types
+pub use codex_usage::CodexUsageSegment;
 pub use context_window::ContextWindowSegment;
 pub use cost::CostSegment;
 pub use directory::DirectorySegment;

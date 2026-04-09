@@ -71,6 +71,7 @@ pub enum SegmentId {
     Usage,
     HourlyUsage,
     WeeklyUsage,
+    CodexUsage,
     Cost,
     Session,
     OutputStyle,

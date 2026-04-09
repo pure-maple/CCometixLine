@@ -151,6 +151,11 @@ impl PreviewComponent {
                     secondary: "󰅐 @4-12 8".to_string(),
                     metadata: HashMap::new(),
                 },
+                SegmentId::CodexUsage => SegmentData {
+                    primary: "5h 0% · 7d 11%".to_string(),
+                    secondary: "@4-16 14".to_string(),
+                    metadata: HashMap::new(),
+                },
                 SegmentId::Cost => SegmentData {
                     primary: "$0.02".to_string(),
                     secondary: "".to_string(),
