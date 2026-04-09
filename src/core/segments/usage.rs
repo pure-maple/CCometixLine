@@ -446,16 +446,9 @@ impl Segment for HourlyUsageSegment {
             Some(p) => format!("{}%({}%)", percent, p),
             None => format!("{}%", percent),
         };
-        // Secondary: reset time with clock icon
-        let secondary = if !reset.is_empty() {
-            format!("󰅐 {}", reset)
-        } else {
-            String::new()
-        };
+        let secondary = if !reset.is_empty() { reset } else { String::new() };
 
-        let dynamic_icon = UsageSegment::get_circle_icon(data.five_hour_util / 100.0);
         let mut metadata = HashMap::new();
-        metadata.insert("dynamic_icon".to_string(), dynamic_icon);
         metadata.insert("utilization".to_string(), data.five_hour_util.to_string());
 
         Some(SegmentData { primary, secondary, metadata })
@@ -489,16 +482,9 @@ impl Segment for WeeklyUsageSegment {
             primary.push_str(&format!(" {}", t));
         }
 
-        // Secondary: reset time with clock icon
-        let secondary = if !reset.is_empty() {
-            format!("󰅐 {}", reset)
-        } else {
-            String::new()
-        };
+        let secondary = if !reset.is_empty() { reset } else { String::new() };
 
-        let dynamic_icon = UsageSegment::get_circle_icon(data.seven_day_util / 100.0);
         let mut metadata = HashMap::new();
-        metadata.insert("dynamic_icon".to_string(), dynamic_icon);
         metadata.insert("utilization".to_string(), data.seven_day_util.to_string());
 
         Some(SegmentData { primary, secondary, metadata })
